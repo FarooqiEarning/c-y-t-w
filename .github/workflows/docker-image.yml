@@ -24,7 +24,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU (for multi‑arch)
+      - name: Set up QEMU for multi‑arch
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
@@ -37,7 +37,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Determine tag metadata
+      - name: Extract metadata (SHA + tag)
         id: meta
         shell: bash
         run: |
@@ -70,7 +70,7 @@ jobs:
             TAGS="${TAGS}\n${IMAGE}:${{ steps.meta.outputs.GIT_TAG }}"
           fi
 
-          # Output to buildx format
+          # Export buildx tags
           echo -e "tags<<EOF" >> $GITHUB_OUTPUT
           echo -e "${TAGS}" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
@@ -93,7 +93,7 @@ jobs:
 
       - name: Scan pushed image with Trivy
         if: always()
-        uses: aquasecurity/trivy-action@v0.20.0
+        uses: aquasecurity/trivy-action@0.33.1
         with:
           image-ref: ${{ env.IMAGE_REPO }}:latest
           format: table
@@ -101,7 +101,7 @@ jobs:
           ignore-unfixed: true
           severity: CRITICAL,HIGH
 
-      - name: Image info summary
+      - name: Show image summary
         run: |
           echo "✔️ Image pushed: ${{ env.IMAGE_REPO }}"
           echo "✔️ Short SHA: ${{ steps.meta.outputs.SHORT_SHA }}"
