@@ -21,86 +21,88 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
+      - name: Set up QEMU (for multi‑arch)
+        uses: docker/setup-qemu-action@v3
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Log in to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        registry: docker.io
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          registry: docker.io
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    - name: Extract metadata
-      id: meta
-      run: |
-        echo "SHORT_SHA=${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
-        if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
-          TAG_NAME=$(jq -r .release.tag_name < "$GITHUB_EVENT_PATH")
-          if [[ "$TAG_NAME" != "null" && -n "$TAG_NAME" ]]; then
-            echo "IS_TAG=true" >> $GITHUB_OUTPUT
-            echo "GIT_TAG=$TAG_NAME" >> $GITHUB_OUTPUT
+      - name: Determine tag metadata
+        id: meta
+        shell: bash
+        run: |
+          SHORT_SHA=${GITHUB_SHA::8}
+          echo "SHORT_SHA=$SHORT_SHA" >> $GITHUB_OUTPUT
+
+          if [[ "${GITHUB_EVENT_NAME}" == "release" ]]; then
+            TAG_NAME=$(jq -r .release.tag_name < "$GITHUB_EVENT_PATH")
+            if [[ -n "$TAG_NAME" && "$TAG_NAME" != "null" ]]; then
+              echo "IS_TAG=true" >> $GITHUB_OUTPUT
+              echo "GIT_TAG=$TAG_NAME" >> $GITHUB_OUTPUT
+            else
+              echo "IS_TAG=false" >> $GITHUB_OUTPUT
+              echo "GIT_TAG=" >> $GITHUB_OUTPUT
+            fi
           else
             echo "IS_TAG=false" >> $GITHUB_OUTPUT
             echo "GIT_TAG=" >> $GITHUB_OUTPUT
           fi
-        elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
-          echo "IS_TAG=true" >> $GITHUB_OUTPUT
-          echo "GIT_TAG=${GITHUB_REF##*/}" >> $GITHUB_OUTPUT
-        else
-          echo "IS_TAG=false" >> $GITHUB_OUTPUT
-          echo "GIT_TAG=" >> $GITHUB_OUTPUT
-        fi
 
-    - name: Set tags
-      id: set_tags
-      run: |
-        IS_TAG="${{ steps.meta.outputs.IS_TAG }}"
-        GIT_TAG="${{ steps.meta.outputs.GIT_TAG }}"
-        # Compose newline-separated tags (Buildx accepts a multi-line string)
-        TAGS="${IMAGE_REPO}:latest\n${IMAGE_REPO}:${GITHUB_SHA::8}"
-        if [[ "$IS_TAG" == "true" && -n "$GIT_TAG" ]]; then
-          TAGS="$TAGS\n${IMAGE_REPO}:$GIT_TAG"
-        fi
-        echo -e "tags<<EOF" >> $GITHUB_OUTPUT
-        echo -e "$TAGS" >> $GITHUB_OUTPUT
-        echo "EOF" >> $GITHUB_OUTPUT
+      - name: Set image tags
+        id: set_tags
+        shell: bash
+        run: |
+          IMAGE="${IMAGE_REPO}"
+          SHORT="${{ steps.meta.outputs.SHORT_SHA }}"
+          TAGS="${IMAGE}:latest\n${IMAGE}:${SHORT}"
 
-    - name: Build and push (multi-arch, cache, tags)
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        file: Dockerfile
-        push: true
-        platforms: ${{ env.PLATFORMS }}
-        tags: ${{ steps.set_tags.outputs.tags }}
-        labels: |
-          org.opencontainers.image.revision=${{ github.sha }}
-          org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-        cache-from: type=registry,ref=${{ env.IMAGE_REPO }}:buildcache
-        cache-to: type=registry,mode=max,ref=${{ env.IMAGE_REPO }}:buildcache
-        build-args: |
-          NODE_ENV=production
+          if [[ "${{ steps.meta.outputs.IS_TAG }}" == "true" ]]; then
+            TAGS="${TAGS}\n${IMAGE}:${{ steps.meta.outputs.GIT_TAG }}"
+          fi
 
-    - name: Scan pushed image with Trivy
-      if: always()
-      uses: aquasecurity/trivy-action@v0.20.0
-      with:
-        image-ref: ${{ env.IMAGE_REPO }}:latest
-        format: 'table'
-        exit-code: '0'
-        ignore-unfixed: true
-        severity: 'CRITICAL,HIGH'
-      continue-on-error: true
+          # Output to buildx format
+          echo -e "tags<<EOF" >> $GITHUB_OUTPUT
+          echo -e "${TAGS}" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-    - name: Post image info
-      run: |
-        echo "Image pushed: ${{ env.IMAGE_REPO }}"
-        echo "Short SHA: ${{ steps.meta.outputs.SHORT_SHA }}"
-        echo "Tags:\n${{ steps.set_tags.outputs.tags }}"
+      - name: Build & push Docker images (multi‑arch)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.set_tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=registry,ref=${{ env.IMAGE_REPO }}:buildcache
+          cache-to: type=registry,mode=max,ref=${{ env.IMAGE_REPO }}:buildcache
+          build-args: |
+            NODE_ENV=production
+
+      - name: Scan pushed image with Trivy
+        if: always()
+        uses: aquasecurity/trivy-action@v0.20.0
+        with:
+          image-ref: ${{ env.IMAGE_REPO }}:latest
+          format: table
+          exit-code: 0
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+
+      - name: Image info summary
+        run: |
+          echo "✔️ Image pushed: ${{ env.IMAGE_REPO }}"
+          echo "✔️ Short SHA: ${{ steps.meta.outputs.SHORT_SHA }}"
+          echo -e "✔️ Tags:\n${{ steps.set_tags.outputs.tags }}"
