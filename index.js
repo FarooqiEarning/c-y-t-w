@@ -1,3 +1,9 @@
+// Crypto polyfill for Baileys compatibility
+const crypto = require('crypto');
+if (!global.crypto) {
+    global.crypto = crypto;
+}
+
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
 const express = require('express');
@@ -21,7 +27,7 @@ const CONFIG = {
     MAX_VIDEO_SIZE_MB: 100,
     MAX_DOCUMENT_SIZE_MB: 2000,
     PORT: process.env.PORT || 5000,
-    LOG_LEVEL: 'silent', // Change to 'debug' for troubleshooting
+    LOG_LEVEL: process.env.LOG_LEVEL || 'silent',
     DOWNLOAD_TIMEOUT: 300000, // 5 minutes
     FFMPEG_TIMEOUT: 600000 // 10 minutes for large files
 };
